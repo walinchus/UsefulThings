@@ -1,0 +1,397 @@
+---
+title: "Press Freedom in Ohio Project"
+author: "Lucia Walinchus"
+date: "4/1/2021"
+output: html_document
+---
+
+##Background
+
+This code is for a story that [Eye on Ohio](EyeonOhio.com) did looking at online harrassment that journalists and others [face.](https://eyeonohio.com/sidebar-shut-your-mouth-journalists-face-a-rising-tide-of-online-harassment/) 
+
+This isn't a scientific study; nor is it meant to be. This is just a look at language posted online using publicly available text mining tools and sentiment analysis.
+
+You can adapt this code for your own use with a share-share alike license. (In other words, please use it, but please cite us.)
+
+For the background of how we coded this, please see ["Text Mining with R"](https://www.tidytextmining.com)
+
+
+##Getting Twitter Data
+
+First, you're going to need a [twitter developer account.](https://developer.twitter.com/en/docs/twitter-api)
+
+Request an API key as you will need that to pull twitter data.
+
+Pulling in your required packages:
+
+```{r}
+library(rtweet)
+library(httpuv)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+
+```
+
+Load your credenitals from the Twitter API and then authenticate them. I didn't add these here as I clearly didn't want to give out my password but this is how you do it. 
+
+```{r}
+#api_key <- "Put your key here"
+#api_secret_key <- "Put your API secret here"
+
+#token <- create_token(
+#app = "Put your app name here",
+#consumer_key = api_key,
+#consumer_secret = api_secret_key)
+
+```
+
+
+For the background of how we coded this, please see ["Text Mining with R"](https://www.tidytextmining.com)
+
+Then, getting a list of journalists and politicians. (Not including ourselves.)
+
+```{r}
+#Ohio_Political_Journalists <- lists_members(list_id = 901159487675002882) #Note, this one URL, for reasons I don't understand, doesn't work. If you got to the actual twitter list, unlike most lists, it doesn't load properly. 
+OhioLawmakers2122 <- lists_members(list_id = 1326542665253445632) #Ohio Lawmakers for the 2021-2022 session
+
+```
+Getting 34 Ohio reporters manually as there's a problem with their list URL. 
+```{r}
+Ohio_Politics_Reporters <- c("@jbalmert", "@mikellivingston","@danielgeldredge","@jwilliamscincy","@JasonAubryNBC4"
+, "@mthompsoncbus"
+, "@kantele10"
+, "@AndrewJTobias"
+, "@RichExner"
+,"@cklaver"
+, "@GeoffWSYX6"
+, "@Kent_Gongwer"
+, "@BirdatHannah"
+, "@FarnoushAmiri"
+, "@howardwilkinson"
+, "@RickRouan"
+, "@awhcolumbus"
+, "@marknaymik"
+, "@SteveKoff"
+, "@karenkasler"
+, "@joingles"
+, "@jcarrsmyth"
+, "@JonDReed"
+, "@sabrinaeaton"
+, "@JMBorchardt"
+, "@lbischoff"
+, "@HenryJGomez"
+, "@cweiser"
+,"@andy_chow","@AR_Shoemaker","@dskolnick"," @nblundo","@RobertVHiggs","@laurahancock")
+```
+
+
+Making a function that loops over each name
+
+
+```{r}
+Search_for_Tweets_Mentioning_Journos <- function(Yo.Name){
+search_tweets(Yo.Name, n=100000, type = "recent", include_rts = FALSE)
+  #Sys.sleep(round(runif(1,1,105),0))
+}
+
+
+```
+
+And running it. 
+```{r}
+Ohio_Tweets_With_Journos <- do_call_rbind(map(Ohio_Politics_Reporters, Search_for_Tweets_Mentioning_Journos))
+```
+
+For reference: getting lawmakers, too
+
+```{r}
+Search_for_Tweets_Mentioning_Ohio_Pols <- function(Yo.Name){
+search_tweets(Yo.Name, n=100000, type = "recent", include_rts = FALSE)
+  #Sys.sleep(round(runif(1,1,105),0)) #played around with variable timing as this keeps going up against the Twitter limits
+}
+
+
+```
+I didn't need to make a separate function for this in retrospect, but playing around with this keeps putting me up against the Twitter call limit so might as well keep them separate. 
+```{r}
+Tweets_With_Ohio_Pols <- do_call_rbind(map(OhioLawmakers2122$screen_name, Search_for_Tweets_Mentioning_Ohio_Pols))
+```
+
+
+#Sentiment analysis 
+
+First, we are going to get a reference of words already tagged as positive or negative. 
+
+
+```{r}
+library(tidytext)
+get_sentiments("bing")#measure of positive or negative
+get_sentiments("afinn")#measure of sentiments in integers
+get_sentiments("nrc")#categorized emotions
+data("stop_words") #tiny words we want to take out
+```
+
+
+Now we want to take that and put it into a tidy format so we can analyze it. 
+
+```{r}
+Tidy_Tweets_Journos <- Ohio_Tweets_With_Journos %>% 
+  unnest_tokens(word, text)
+```
+Now we're going to take out the common words like "the," "a," "if," and so forth.
+
+```{r}
+Tidy_Tweets_Journos <- Tidy_Tweets_Journos %>% anti_join(stop_words)
+```
+
+What are the most common unique words in this?
+
+```{r}
+Tidy_Tweets_Journos %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 75) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL,
+       title = "Most Popular Words",
+       subtitle = "In a sample of 2,808 tweets mentioning Ohio political journalists last month \n (not counting common words such as 'the')",
+       caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")
+```
+
+
+
+```{r}
+Tidy_Tweets_Journos_sentiment <-  Tidy_Tweets_Journos %>% 
+  inner_join(get_sentiments("bing")) %>% 
+  count(day(created_at),sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+
+```{r}
+ggplot(Tidy_Tweets_Journos_sentiment, aes(`day(created_at)`, sentiment)) +
+  geom_col(color="blue", fill="blue")+
+  geom_text(aes(y= sentiment +50 *sign(sentiment), label = sentiment),
+            position=position_dodge(width =0.9)
+            )+
+  labs(title = "Tweets mentioning Ohio Political Reporters", subtitle = "The number of positive words minus negative words in a sample \n of 2,808 tweets in the last month", caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")+
+  ylab("Sentiment")+
+  xlab("Day")
+```
+
+
+
+
+
+
+Comparing to a sample of tweets directed at Ohio politicians
+```{r}
+Tidy_Tweets_Ohio_Pols <- Ohio_Tweets_With_Ohio_Pols %>% 
+  unnest_tokens(word, text)
+```
+Now we're going to take out the common words
+
+```{r}
+Tidy_Tweets_Ohio_Pols <- Tidy_Tweets_Ohio_Pols %>% anti_join(stop_words)
+```
+
+What are the most common words in this?
+
+```{r}
+Tidy_Tweets_Ohio_Pols %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 500) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL,
+       title = "Most Popular Words",
+       subtitle = "In a sample of 17,799 tweets mentioning Ohio polticians last month \n (not counting common words such as 'the')",
+       caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")
+```
+
+
+```{r}
+Tidy_Tweets_Ohio_Pols_sentiment <-  Tidy_Tweets_Ohio_Pols %>% 
+  inner_join(get_sentiments("bing")) %>% 
+  count(day(created_at),sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+
+```{r}
+ggplot(Tidy_Tweets_Ohio_Pols_sentiment, aes(`day(created_at)`, sentiment)) +
+  geom_col(color="blue", fill="blue")+
+  geom_text(aes(y= sentiment +150 *sign(sentiment), label = sentiment),
+            position=position_dodge(width =0.9)
+            )+
+  labs(title = "Tweets mentioning Ohio Politicians", subtitle = "The number of positive words minus negative words in a sample \n of 17,799 tweets in the last month", caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")+
+  ylab("Sentiment")+
+  xlab("Day")
+```
+
+```{r}
+Who_Is_Tweeting <- Ohio_Tweets_With_Ohio_Pols %>% count(screen_name)
+datatable(Who_Is_Tweeting)
+```
+
+
+
+##Comparing that to benign topics
+NASA
+
+```{r}
+NASA <- search_tweets("NASAhqphoto", n=1000, type = "recent", include_rts = FALSE)
+```
+Note: had to compare to NASA *photos*, because as it turns out "nasa" is a pretty common Filipino word. 
+```{r}
+Tidy_NASA <- NASA %>% 
+  unnest_tokens(word, text)
+```
+Now we're going to take out the common words
+
+```{r}
+Tidy_NASA <- Tidy_NASA %>% anti_join(stop_words)
+```
+
+What are the most common words in this?
+
+```{r}
+Tidy_NASA %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 100) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+
+```{r}
+Tidy_NASA_sentiment <-  Tidy_NASA %>% 
+  inner_join(get_sentiments("bing")) %>% 
+  count(day(created_at),sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+
+```{r}
+ggplot(Tidy_NASA_sentiment, aes(`day(created_at)`, sentiment)) +
+  geom_col(color="blue", fill="blue")+
+  geom_text(aes(y= sentiment + 5 *sign(sentiment), label = sentiment),
+            position=position_dodge(width =0.9)
+            )+
+  labs(title = "Tweets mentioning NASA photos", subtitle = "The number of positive words minus negative words in a sample \n of 1,000 tweets in the last month", caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")+
+  ylab("Sentiment")+
+  xlab("Day")
+```
+
+Kittens
+
+```{r}
+kittens <- search_tweets("kittens", n=1000, type = "recent", include_rts = FALSE)
+```
+
+```{r}
+Tidy_kittens <- kittens %>% 
+  unnest_tokens(word, text)
+```
+Now we're going to take out the common words
+
+```{r}
+Tidy_kittens <- Tidy_kittens %>% anti_join(stop_words)
+```
+
+What are the most common words in this?
+
+```{r}
+Tidy_kittens %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 50) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+```{r}
+Tidy_kittens_sentiment <-  Tidy_kittens %>% 
+  inner_join(get_sentiments("bing")) %>% 
+  count(hour(created_at),sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+
+```{r}
+ggplot(Tidy_kittens_sentiment, aes(`hour(created_at)`, sentiment)) +
+  geom_col(color="blue", fill="blue")+
+  geom_text(aes(y= sentiment +2 *sign(sentiment), label = sentiment),
+            position=position_dodge(width =0.9)
+            )+
+  labs(title = "Tweets mentioning kittens", subtitle = "The number of positive words minus negative words in a sample \n of 1,000 tweets in the last month", caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")+
+  ylab("Sentiment")+
+  xlab("Hour")
+```
+
+sunshine
+
+```{r}
+sunshine <- search_tweets("sunshine", n=1000, type = "recent", include_rts = FALSE)
+```
+
+```{r}
+Tidy_sunshine <- sunshine %>% 
+  unnest_tokens(word, text)
+```
+Now we're going to take out the common words
+
+```{r}
+Tidy_sunshine <- Tidy_sunshine %>% anti_join(stop_words)
+```
+
+What are the most common words in this?
+
+```{r}
+Tidy_sunshine %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 25) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+Note the blank spaces are emojis, and while it's not impossible to get in emojis to ggplot, it's pretty complicated and not really relevant to our analysis. So we will skip it here. 
+
+```{r}
+Tidy_sunshine_sentiment <-  Tidy_sunshine %>% 
+  inner_join(get_sentiments("bing")) %>% 
+  count(minute(created_at),sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+Had to modify this to be every minute. Evidently, people chat about sunshine quite a bit!
+```{r}
+ggplot(Tidy_sunshine_sentiment, aes(`minute(created_at)`, sentiment)) +
+  geom_col(color="blue", fill="blue")+
+  geom_text(aes(y= sentiment +2 *sign(sentiment), label = sentiment),
+            position=position_dodge2(width= .9, padding =.1),
+            size= 2.5
+            )+
+  labs(title = "Tweets mentioning sunshine", subtitle = "The number of positive words minus negative words in a sample \n of 1,000 tweets in the last month", caption = "Analysis by Eye on Ohio, the Ohio Center for Journalism")+
+  ylab("Sentiment")+
+  xlab("Minute")
+```
+
+
+
+
+
+
+
+
+
+
